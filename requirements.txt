@@ -1,0 +1,6 @@
+flask
+flask-session
+torch
+nltk
+textblob
+pymongo
