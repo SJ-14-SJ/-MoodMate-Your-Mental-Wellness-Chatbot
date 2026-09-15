@@ -1,32 +1,20 @@
 import json
+import string
+from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-import nltk
-from nltk.stem.porter import PorterStemmer
-import string
+from model import NeuralNet
+from nltk_utils import tokenize, stem, bag_of_words
 
-nltk.download('punkt')
-
-stemmer = PorterStemmer()
-
-def tokenize(sentence):
-    return nltk.word_tokenize(sentence)
-
-def stem(word):
-    return stemmer.stem(word.lower())
-
-def bag_of_words(tokenized_sentence, all_words):
-    tokenized_sentence = [stem(w) for w in tokenized_sentence]
-    bag = np.zeros(len(all_words), dtype=np.float32)
-    for idx, w in enumerate(all_words):
-        if w in tokenized_sentence:
-            bag[idx] = 1.0
-    return bag
+ROOT = Path(__file__).resolve().parent
+# Reproducible initialization and minibatch order for this baseline.
+np.random.seed(42)
+torch.manual_seed(42)
 
 # Load JSON
-with open("intents.json", "r") as f:
+with open(ROOT / "intents.json", "r", encoding="utf-8") as f:
     intents = json.load(f)
 
 all_words = []
@@ -70,19 +58,6 @@ class ChatDataset(Dataset):
     def __len__(self):
         return self.n_samples
 
-# Neural Net
-class NeuralNet(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super(NeuralNet, self).__init__()
-        self.l1 = nn.Linear(input_size, hidden_size)
-        self.l2 = nn.Linear(hidden_size, hidden_size)
-        self.l3 = nn.Linear(hidden_size, output_size)
-
-    def forward(self, x):
-        x = torch.relu(self.l1(x))
-        x = torch.relu(self.l2(x))
-        return self.l3(x)
-
 # Hyperparameters
 batch_size = 8
 hidden_size = 8
@@ -121,7 +96,7 @@ print(f"Final loss: {loss.item():.4f}")
 
 # Save model
 data = {
-    "model_state": model.state_dict(),
+    "model_state": {key: value.cpu() for key, value in model.state_dict().items()},
     "input_size": input_size,
     "hidden_size": hidden_size,
     "output_size": output_size,
@@ -129,7 +104,7 @@ data = {
     "tags": tags
 }
 
-FILE = "data.pth"
+FILE = ROOT / "data.pth"
 torch.save(data, FILE)
 
 print(f"Training complete. File saved to {FILE}")
