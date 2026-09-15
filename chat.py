@@ -1,50 +1,58 @@
-import random
+"""Command-line intent-classification demo; importing this module does not start input."""
 import json
+import random
+from pathlib import Path
 import torch
 from model import NeuralNet
 from nltk_utils import bag_of_words, tokenize
 
-# Load intents
-with open('intents.json', 'r') as f:
-    intents = json.load(f)
+ROOT = Path(__file__).resolve().parent
+FALLBACK = "I'm not sure I understand. Can you try rephrasing?"
 
-# Load model
-FILE = "data.pth"
-data = torch.load(FILE)
 
-input_size = data["input_size"]
-hidden_size = data["hidden_size"]
-output_size = data["output_size"]
-all_words = data["all_words"]
-tags = data["tags"]
-model_state = data["model_state"]
+class MoodMate:
+    def __init__(self, checkpoint=ROOT / 'data.pth', intents_path=ROOT / 'intents.json', threshold=0.75):
+        self.threshold = threshold
+        with open(intents_path, encoding='utf-8') as handle:
+            self.intents = json.load(handle)['intents']
+        data = torch.load(checkpoint, map_location='cpu', weights_only=True)
+        self.words = data['all_words']
+        self.tags = data['tags']
+        self.model = NeuralNet(data['input_size'], data['hidden_size'], data['output_size'])
+        self.model.load_state_dict(data['model_state'])
+        self.model.eval()
+        self.responses = {intent['tag']: intent['responses'] for intent in self.intents}
 
-model = NeuralNet(input_size, hidden_size, output_size)
-model.load_state_dict(model_state)
-model.eval()
+    def reply(self, sentence):
+        if not sentence.strip():
+            return FALLBACK
+        features = bag_of_words(tokenize(sentence), self.words)
+        # A network bias can be confident on an entirely unknown input.
+        if not features.any():
+            return FALLBACK
+        tensor = torch.from_numpy(features).float().unsqueeze(0)
+        with torch.inference_mode():
+            probabilities = torch.softmax(self.model(tensor), dim=1)
+            probability, index = probabilities.max(dim=1)
+        if probability.item() <= self.threshold:
+            return FALLBACK
+        options = self.responses.get(self.tags[index.item()], [])
+        return random.choice(options) if options else FALLBACK
 
-bot_name = "MoodMate"
-print(f"{bot_name} is ready to talk! (type 'quit' to stop)")
 
-while True:
-    sentence = input("You: ")
-    if sentence.lower() == "quit":
-        break
+def main():
+    bot = MoodMate()
+    print('MoodMate: educational intent-classification demo, not clinical advice.')
+    print("Type 'quit' to stop.")
+    while True:
+        try:
+            sentence = input('You: ')
+        except (EOFError, KeyboardInterrupt):
+            print(); break
+        if sentence.strip().lower() == 'quit':
+            break
+        print('MoodMate:', bot.reply(sentence))
 
-    sentence = tokenize(sentence)
-    X = bag_of_words(sentence, all_words)
-    X = torch.from_numpy(X).float().unsqueeze(0)
 
-    output = model(X)
-    _, predicted = torch.max(output, dim=1)
-
-    tag = tags[predicted.item()]
-    probs = torch.softmax(output, dim=1)
-    prob = probs[0][predicted.item()]
-
-    if prob.item() > 0.75:
-        for intent in intents["intents"]:
-            if tag == intent["tag"]:
-                print(f"{bot_name}: {random.choice(intent['responses'])}")
-    else:
-        print(f"{bot_name}: I'm not sure I understand. Can you try rephrasing?")
+if __name__ == '__main__':
+    main()
